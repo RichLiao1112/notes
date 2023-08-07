@@ -1,3 +1,12 @@
+### 从URL输入到页面展现到底发生什么？
+1. DNS 解析:将域名解析成 IP 地址
+2. TCP 连接：TCP 三次握手
+3. 发送 HTTP 请求
+4. 服务器处理请求并返回 HTTP 报文
+5. 浏览器解析渲染页面
+6. 断开连接：TCP 四次挥手
+
+
 ### https和http
 HTTPS 是支持加密和验证的 HTTP。两种协议的唯一区别是HTTPS 使用 TLS (SSL) 来加密普通的 HTTP 请求和响应，并对这些请求和响应进行数字签名。因此，HTTPS 比 HTTP 安全得多。使用 HTTP 的网站的 URL 中带有 http://，而使用 HTTPS 的网站则带有 https://。
 
@@ -108,6 +117,26 @@ chrome架构：
 
   - 宏任务队列：script(整体代码)、setTimeout、setInterval、I/O、UI 交互事件、setImmediate(Node.js 环境)
   - 微任务队列：Promise.then、MutaionObserver、process.nextTick(Node.js 环境)
+
+```javascript
+console.log('同步代码1');
+
+setTimeout(() => {
+  console.log('setTimeout 5')
+}, 0)
+
+new Promise((resolve) => {
+  console.log('同步代码2')
+  setTimeout(() => {
+    console.log('setTimeout 6')
+  }, 0)
+  resolve()
+}).then(() => {
+  console.log('promise.then 4')
+})
+
+console.log('同步代码3');
+```
 
 ---
 
@@ -467,16 +496,22 @@ obj.sayName(); // Alice
 都是异步加载，都不会阻塞HTML文档的解析和渲染
 
 ```html
-<script defer src="script1.js"></script>
-defer
+例子：
 
-脚本的加载不会阻塞HTML文档的解析和渲染。
-脚本的执行顺序与它们在HTML文档中的顺序一致。
-脚本的执行时机是在文档解析完成后，DOMContentLoaded事件触发前。
+script
+<script src="script1.js"></script>
+会阻碍 HTML 解析，只有下载好并执行完脚本才会继续解析 HTML。
+
+
+defer
+<script defer src="script1.js"></script>
+完全不会阻碍 HTML 的解析，解析完成之后（DOMContentLoaded事件触发前）再按照顺序执行脚本。
+执行顺序与它们在HTML文档中的顺序一致。
 
 
 async
-脚本的执行时机是在它被下载完成后立即执行
+<script async src="script1.js"></script>
+解析 HTML 过程中进行脚本的异步下载，下载成功立马执行，有可能会阻断 HTML 的解析
 多个带有async属性的脚本的执行顺序是不确定的，取决于它们下载完成的顺序
 
 ```
