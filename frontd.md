@@ -1,10 +1,475 @@
 ### 从URL输入到页面展现到底发生什么？
-1. DNS 解析:将域名解析成 IP 地址
+1. DNS 解析：将域名解析成 IP 地址
 2. TCP 连接：TCP 三次握手
 3. 发送 HTTP 请求
 4. 服务器处理请求并返回 HTTP 报文
 5. 浏览器解析渲染页面
 6. 断开连接：TCP 四次挥手
+
+#### 浏览器解析渲染页面过程
+1. 解析HTML，生成DOM树，解析CSS，生成CSSOM树
+2. 将DOM树和CSSOM树结合，生成渲染树(Render Tree)
+3. Layout(回流)：根据生成的渲染树，进行回流(Layout)，得到节点的几何信息（位置，大小）
+4. Painting(重绘)：根据渲染树以及回流得到的几何信息，得到节点的绝对像素
+5. Display：将像素发送给GPU，展示在页面上。（这一步其实还有很多内容，比如会在GPU将多个合成层合并为同一个层，并展示在页面中。而css3硬件加速的原理则是新建合成层，这里我们不展开，之后有机会会写一篇博客）
+
+https://juejin.cn/post/6844903779700047885
+
+![浏览器解析渲染页面过程](image.png)
+
+#### 重排(reflow)和重绘(repaint)
+重排（回流）一定会触发重绘，而重绘不一定会回流。
+
+**何时发生回流重绘**
+- 添加或删除可见的DOM元素
+- 元素的位置发生变化
+- 元素的尺寸发生变化（包括外边距、内边框、边框大小、高度和宽度等）
+- 内容发生变化，比如文本变化或图片被另一个不同尺寸的图片所替代
+- 页面一开始渲染的时候（这肯定避免不了）
+- 浏览器的窗口尺寸变化（因为回流是根据视口的大小来计算元素的位置和大小的）
+
+**重排**：（Layout阶段）无论通过什么方式影响了元素的几何信息(元素在视口内的位置和尺寸大小)，浏览器需要重新计算元素在视口内的几何属性，这个过程叫做重排。
+
+**重绘**：（Painting阶段）通过构造渲染树和重排（回流）阶段，我们知道了哪些节点是可见的，以及可见节点的样式和具体的几何信息（元素在视窗内的位置和尺寸大小），接下来就可以将渲染树的每个节点都转换为屏幕上的**实际像素**，这个阶段就叫重绘
+
+**优化点**
+1. 最小化重绘和重排：比如css样式集中改变
+2. 需要对DOM对一系列修改的时候，先使元素脱离文档流，再对其进行修改，最后将元素带回到文档中
+3. 使用 absolute 或 fixed 使元素脱离文档流：这在制作复杂的动画时对性能的影响比较明显
+4. **开启 GPU 加速**（核心优化）：利用 css 属性 transform 、will-change 等，比如改变元素位置，我们使用 translate 会比使用绝对定位改变其 left 、top 等来的高效，因为它不会触发重排或重绘，transform 使浏览器为元素创建⼀个 GPU 图层，这使得动画元素在一个独立的层中进行渲染。当元素的内容没有发生改变，就没有必要进行重绘。
+  - 触发 GPU 加速的 css 属性：**transform、opacity、filters、Will-change**
+  - 为太多元素使用css3硬件加速，会导致内存占用较大，会有性能问题
+  - 在GPU渲染字体会导致抗锯齿无效。这是因为GPU和CPU的算法不同。因此如果你不在动画结束的时候关闭硬件加速，会产生字体模糊。
+
+**三种方式可以让DOM脱离文档流**
+1. 隐藏元素，应用修改，重新显示。（display = 'none'）
+```javascript
+function appendDataToElement(appendToElement, data) {
+    let li;
+    for (let i = 0; i < data.length; i++) {
+    	li = document.createElement('li');
+        li.textContent = 'text';
+        appendToElement.appendChild(li);
+    }
+}
+const ul = document.getElementById('list');
+ul.style.display = 'none';
+appendDataToElement(ul, data);
+ul.style.display = 'block';
+```
+2. 使用文档片段(document fragment)在当前DOM之外构建一个子树，再把它拷贝回文档
+```javascript
+const ul = document.getElementById('list');
+const fragment = document.createDocumentFragment();
+appendDataToElement(fragment, data);
+ul.appendChild(fragment);
+```
+3. 将原始元素拷贝到一个脱离文档的节点中，修改节点后，再替换原始的元素
+```javascript
+const ul = document.getElementById('list');
+const clone = ul.cloneNode(true);
+appendDataToElement(clone, data);
+ul.parentNode.replaceChild(clone, ul);
+```
+现代浏览器会使用队列来储存多次修改，一次执行，所以上3中优化方案已经过时了。
+
+#### 盒模型
+https://juejin.cn/post/6960866014384881671
+
+CSS3 中的盒模型有以下两种：标准盒模型、IE（替代）盒模型。
+
+两种盒子模型都是由 content + padding + border + margin 构成，其大小都是由 content + padding + border 决定的，但是盒子内容宽/高度（即 width/height）的计算范围根据盒模型的不同会有所不同：
+
+**标准盒模型：只包含 content**（可明确地通过 width，min-width，max-width，height，min-height，max-height 控制）
+
+**IE（替代）盒模型：content + padding + border**
+
+可以通过 box-sizing 来改变元素的盒模型：
+
+**box-sizing: content-box ：标准盒模型（默认值）**
+
+**box-sizing: border-box ：IE（替代）盒模型**
+
+
+#### BFC的理解
+BFC（Block Formatting Contexts）即块级格式上下文，根据盒模型可知，每个元素都被定义为一个矩形盒子，然而盒子的布局会受到**尺寸，定位，盒子的子元素或兄弟元素，视口的尺寸**等因素决定，所以这里有一个浏览器计算的过程，计算的规则就是由一个叫做**视觉格式化模型**的东西所定义的，BFC 就是来自这个概念，它是 CSS 视觉渲染的一部分，**用于决定块级盒的布局及浮动相互影响范围的一个区域**。
+
+以下元素会创建 BFC：
+- 根元素（<html>）
+- 浮动元素（float 不为 none）
+- 绝对定位元素（position 为 absolute 或 fixed）
+- 表格的标题和单元格（display 为 table-caption，table-cell）
+- 匿名表格单元格元素（display 为 table 或 inline-table）
+- 行内块元素（display 为 inline-block）
+- overflow 的值不为 visible 的元素
+- 弹性元素（display 为 flex 或 inline-flex 的元素的直接子元素）
+- 网格元素（display 为 grid 或 inline-grid 的元素的直接子元素）
+
+> 以上是 CSS2.1 规范定义的 BFC 触发方式，在最新的 CSS3 规范中，弹性元素和网格元素会创建 F(Flex)FC 和 G(Grid)FC。
+
+**BFC 范围**
+
+BFC 包含创建它的元素的所有子元素，但是不包括创建了新的 BFC 的子元素的内部元素。
+
+简单来说，子元素如果又创建了一个新的 BFC，那么它里面的内容就不属于上一个 BFC 了，这体现了 BFC 隔离 的思想
+
+
+**特性**
+
+1. BFC 内部的块级盒会在垂直方向上一个接一个排列
+2. 同一个 BFC 下的相邻块级元素可能发生外边距折叠，创建新的 BFC 可以避免的外边距折叠
+3. 每个元素的外边距盒（margin box）的左边与包含块边框盒（border box）的左边相接触（从右向左的格式化，则相反），即使存在浮动也是如此
+4. 浮动盒的区域不会和 BFC 重叠
+5. 计算 BFC 的高度时，浮动元素也会参与计算
+
+**自适应多栏布局**
+
+利用 特性3 和 特性4，中间栏创建 BFC，左右栏宽度固定后浮动。由于盒子的 margin box 的左边和包含块 border box 的左边相接触，同时浮动盒的区域不会和 BFC 重叠，所以中间栏的宽度会自适应
+
+**防止外边距折叠**
+
+利用 特性2，创建新的 BFC ，让相邻的块级盒位于不同 BFC 下可以防止外边距折叠
+
+**清除浮动**
+
+利用 特性5，BFC 内部的浮动元素也会参与高度计算，可以清除 BFC 内部的浮动
+
+
+### 实现两栏布局（左侧固定 + 右侧自适应布局）
+1. 利用浮动，左边元素宽度固定 ，设置向左浮动。将右边元素的 margin-left 设为固定宽度 。注意，因为右边元素的 width 默认为 auto ，所以会自动撑满父元素
+<html>
+<head>
+  <style>
+  .outer1 {
+    height: 100px;
+  }
+  .left1 {
+    float: left;
+    width: 200px;
+    height: 100%;
+    background: lightcoral;
+  }
+  .right1 {
+    margin-left: 200px;
+    height: 100%;
+    background: lightseagreen;
+  }
+  </style>
+</head>
+<body>
+  <div class="outer1">
+    <div class="left1">左侧</div>
+    <div class="right1">右侧</div>
+  </div>
+</body>
+</html>
+
+---
+
+2. 同样利用浮动，左边元素宽度固定 ，设置向左浮动。右侧元素设置 overflow: auto; 这样右边就触发了 BFC ，BFC 的区域不会与浮动元素发生重叠，所以两侧就不会发生重叠。
+
+
+<html>
+<head>
+  <style>
+  .outer2 {
+    height: 100px;
+  }
+  .left2 {
+    float: left;
+    width: 200px;
+    height: 100%;
+    background: lightcoral;
+  }
+  .right2 {
+    overflow: auto;
+    height: 100%;
+    background: lightseagreen;
+  }
+  </style>
+</head>
+<body>
+  <div class="outer2">
+    <div class="left2">左侧</div>
+    <div class="right2">右侧</div>
+  </div>
+</body>
+</html>
+
+---
+
+3. 利用 flex 布局，左边元素固定宽度，右边的元素设置 flex: 1
+<html>
+<head>
+  <style>
+  .outer3 {
+    display: flex;
+    height: 100px;
+  }
+  .left3 {
+    width: 200px;
+    height: 100%;
+    background: lightcoral;
+  }
+  .right3 {
+    flex: 1;
+    height: 100%;
+    background: lightseagreen;
+  }
+  </style>
+</head>
+<body>
+  <div class="outer3">
+    <div class="left3">左侧</div>
+    <div class="right3">右侧</div>
+  </div>
+</body>
+</html>
+
+---
+
+4. 利用绝对定位，父级元素设为相对定位。左边元素 absolute  定位，宽度固定。右边元素的 margin-left  的值设为左边元素的宽度值
+
+<html>
+<head>
+  <style>
+  .outer {
+    position: relative;
+    height: 100px;
+  }
+  .left {
+    position: absolute;
+    width: 200px;
+    height: 100%;
+    background: lightcoral;
+  }
+  .right {
+    margin-left: 200px;
+    height: 100%;
+    background: lightseagreen;
+  }
+  </style>
+</head>
+<body>
+  <div class="outer4">
+    <div class="left4">左侧</div>
+    <div class="right4">右侧</div>
+  </div>
+</body>
+</html>
+
+---
+
+
+### 实现圣杯布局和双飞翼布局（经典三分栏布局）
+
+**圣杯布局和双飞翼布局的目的：**
+
+- 三栏布局，中间一栏最先加载和渲染（内容最重要，这就是为什么还需要了解这种布局的原因）。
+- 两侧内容固定，中间内容随着宽度自适应。
+- 一般用于 PC 网页。
+
+**圣杯布局和双飞翼布局的技术总结：**
+
+- 使用 float  布局。
+- 两侧使用 margin 负值，以便和中间内容横向重叠。
+- 防止中间内容被两侧覆盖，圣杯布局用 padding ，双飞翼布局用 margin 。
+
+
+**圣杯布局**
+
+<html>
+<head>
+  <style>
+  #container5 {
+    padding-left: 200px;
+    padding-right: 150px;
+    overflow: auto;
+  }
+  #container5 p {
+    float: left;
+  }
+  .center5 {
+    width: 100%;
+    background-color: lightcoral;
+  }
+  .left5 {
+    width: 200px;
+    position: relative;
+    left: -200px;
+    margin-left: -100%;
+    background-color: lightcyan;
+  }
+  .right5 {
+    width: 150px;
+    margin-right: -150px;
+    background-color: lightgreen;
+  }
+  .clearfix5:after {
+    content: "";
+    display: table;
+    clear: both;
+}
+  </style>
+</head>
+<body>
+<div id="container5" class="clearfix5">
+  <p class="center5">我是中间</p>
+  <p class="left5">我是左边</p>
+  <p class="right5">我是右边</p>
+</div>
+</body>
+</html>
+
+---
+
+**双飞翼布局**
+
+<html>
+<head>
+  <style>
+  .float6 {
+    float: left;
+  }
+  #main6 {
+    width: 100%;
+    height: 200px;
+    background-color: lightpink;
+  }
+  #main-wrap6 {
+    margin: 0 190px 0 190px;
+  }
+  #left6 {
+    width: 190px;
+    height: 200px;
+    background-color: lightsalmon;
+    margin-left: -100%;
+  }
+  #right6 {
+    width: 190px;
+    height: 200px;
+    background-color: lightskyblue;
+    margin-left: -190px;
+  }
+  </style>
+</head>
+<body>
+<div id="main6" class="float6">
+  <div id="main-wrap6">main</div>
+</div>
+<div id="left6" class="float6">left</div>
+<div id="right6" class="float6">right</div>
+</body>
+</html>
+
+---
+
+
+
+### 水平垂直居中多种实现方式
+
+1. 利用绝对定位和 translate ，设置 left: 50%  和 top: 50%  现将子元素左上角移到父元素中心位置，然后再通过 translate  来调整子元素的中心点到父元素的中心。该方法可以**不定宽高**
+```css
+.father {
+  position: relative;
+}
+.son {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+```
+
+2. 利用绝对定位，子元素所有方向都为 0 ，将 margin  设置为 auto ，由于宽高固定，对应方向实现平分，该方法必须**盒子有宽高**
+```css
+.father {
+  position: relative;
+}
+.son {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: auto;
+  height: 100px;
+  width: 100px;
+}
+```
+
+3. 利用绝对定位，设置 left: 50% 和 top: 50% 现将子元素左上角移到父元素中心位置，然后再通过 margin-left  和 margin-top  以子元素自己的一半宽高进行负值赋值。该方法**必须定宽高**
+```css
+.father {
+  position: relative;
+}
+.son {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 200px;
+  height: 200px;
+  margin-left: -100px;
+  margin-top: -100px;
+}
+```
+
+4. 利用 flex ，最经典最方便的一种了，不用解释，定不定宽高无所谓的
+```css
+.father {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+```
+
+5. grid布局
+```css
+.box {
+    width: 200px;
+    height: 200px;
+    border: 1px solid red;
+    display: grid;
+}
+.children-box {
+    width: 100px;
+    height: 100px;
+    background: yellow;
+    margin: auto;
+}
+```
+
+6. table-cell + vertical-align + inline-block/margin: auto
+```css
+.box {
+    width: 200px;
+    height: 200px;
+    border: 1px solid red;
+    display: table-cell;
+    text-align: center;
+    vertical-align: middle;
+}
+.children-box {
+    width: 100px;
+    height: 100px;
+    background: yellow;
+    display: inline-block; // 可以换成margin: auto;
+}
+```
+
+
+### flex 布局
+这里有个小问题，很多时候我们会用到 flex: 1 ，它具体包含了以下的意思：
+
+- flex-grow: 1 ：该属性默认为 0 ，如果存在剩余空间，元素也不放大。设置为 1  代表会放大。
+- flex-shrink: 1 ：该属性默认为 1 ，如果空间不足，元素缩小。
+- flex-basis: 0% ：该属性定义在分配多余空间之前，元素占据的主轴空间。浏览器就是根据这个属性来计算是否有多余空间的。默认值为 auto ，即项目本身大小。设置为 0%  之后，-因为有 flex-grow  和 flex-shrink  的设置会自动放大或缩小。在做两栏布局时，如果右边的自适应元素 flex-basis  设为 auto  的话，其本身大小将会是 0 。​
+
+
+### line-height 如何继承
+- 父元素的 line-height 写了具体数值，比如 30px，则子元素 line-height 继承该值。
+- 父元素的 line-height 写了比例，比如 1.5 或 2，则子元素 line-height 也是继承该比例。
+- 父元素的 line-height 写了百分比，比如 200%，则子元素 line-height 继承的是父元素 font-size * 200% 计算出来的值。
 
 
 ### https和http
@@ -212,6 +677,8 @@ for (var prop in p) {
 
 **AMD\CMD**
 
+IIFE：立即执行函数
+
 CMD和AMD都是JavaScript模块化规范，它们的主要区别在于模块定义和加载方式不同。具体来说：
 
 CMD（Common Module Definition）采用**同步方式**加载模块，即只有当需要使用某个模块时才会加载该模块，因此CMD模块可以更精细地控制模块的加载顺序。常见的CMD库有SeaJS。常用于Node服务端。
@@ -276,12 +743,49 @@ commonjs始终只会导出一个默认成员
 import不是解构
 
 ### babel
-通过插件编译转化代码
+
+babel 就是一个 Javascript Transpiler（转译器）。
+
+https://juejin.cn/post/7200366809409159205?searchId=202308131946334072D4319C221E6F5E2B#heading-6
+
+通过插件编译转化代码至ES5。
+1. 转译 esnext、typescript、flow 等到目标环境支持
+2. 一些特定用途的代码转换
+  - 比如函数插桩（函数中自动插入一些代码，例如埋点代码）、自动国际化等
+3. 代码的静态分析
+  - linter 工具就是分析 AST 的结构，对代码规范进行检查。
+  - api 文档自动生成工具，可以提取源码中的注释，然后生成文档。
+  - type checker 会根据从 AST 中提取的或者推导的类型信息，对 AST 进行类型是否一致的检查，从而减少运行时因类型导致的错误。
+  - 压缩混淆工具，这个也是分析代码结构，进行删除死代码、变量名混淆、常量折叠等各种编译优化，生成体积更小、性能更优的代码。
+  - js 解释器，除了对 AST 进行各种信息的提取和检查以外，我们还可以直接解释执行 AST。
 
 
-### 打包工具
+**AST**
+
+即 抽象语法树（abstract syntax tree）
+
+通过不同的对象来保存不同的数据，并且按照依赖关系组织起来，这种数据结构就是抽象语法树（abstract syntax tree）。之所以叫抽象语法树是因为数据结构中省略掉了一些无具体意义的分隔符比如 ; { } 等。
+
+#### babel api
+
+babel 的编译流程分为三步：parse、transform、generate，每一步都暴露了一些 api ：
+- parse 阶段有 @babel/parser，功能是把源码转成 AST
+- transform 阶段有 @babel/traverse，可以遍历 AST，并调用 visitor 函数修改 AST，修改 AST 自然涉及到 AST 的判断、创建、修改等，这时候就需要 @babel/types 了，当需要批量创建 AST 的时候可以使用 @babel/template 来简化 AST 创建逻辑
+- generate 阶段会把 AST 打印为目标代码字符串，同时生成 sourcemap，需要 @babel/generate 包
+
+其他：
+- 中途遇到错误想打印代码位置的时候，使用 @babel/code-frame 包
+- babel 的整体功能通过 @babel/core 提供，基于上面的包完成 babel 整体的编译流程，并实现插件功能
+
+
+
+
+### webpack 打包工具
 
 **webpack**
+
+https://juejin.cn/post/6943468761575849992
+
 webpack是一款现代化的打包工具，它可以将多个模块打包成一个或多个bundle文件。webpack的打包过程可以简单概括为以下几个步骤：
 
 读取入口文件(entry)：webpack会从指定的入口文件开始分析整个项目的依赖关系。
@@ -304,9 +808,8 @@ webpack遵循es module标准的import声明
 html代码中的图片标签src属性
 
 
-
-**loader 模块化核心** 专注实现模块化资源加载，通过不同的module处理不同的前端资源(css/js/html)，
-- 编译转换类
+**loader 模块化核心** 专注实现模块化资源加载，通过不同的module处理不同的前端资源(css/js/html)
+- 编译转换类（主要）
 - 文件操作类
 - 代码检查类
 
@@ -377,36 +880,72 @@ module.exports = {
 https://www.webpackjs.com/api/compiler-hooks/
 ```javascript
 class MyPlugin {
+  // webpack启动时自动启动
   apply(complier) {
-    // webpack启动时自动启动
-
-    complier.hooks.emit.tap() // emit勾子
+    compiler.hooks.emit.tap('MyPlugin', compilation => {
+      // compilation: 当前打包构建流程的上下文
+      console.log(compilation);
+      
+      // do something...
+    })
   }
 }
 ```
 
 **webpack watch**
+
 webpack --watch 修改代码后自动编译
 
 配合brower-sync监听dist目录自动刷新
+
 磁盘写、读 效率较低
 
 **webpack dev server**
+
 安装webpack-dev-server依赖
 执行webpack-dev-server启动应用即可自动编译 刷新页面。打包结果在内存中，没有保存在磁盘里
 无效写读磁盘，效率较高
 
 **hot module replace 热替换**
+
 实时替换模块，页面不刷新，保留页面状态
 已集成至webpack-dev-server --hot
 
-**source map**
+**sourceMap**
+
+https://juejin.cn/post/6943468761575849992
+
 记录js压缩打包前的变量和打包后的变量关联关系，易于调试错误。
+
+sourceMap是一项将编译、打包、压缩后的代码映射回源代码的技术，由于打包压缩后的代码并没有阅读性可言，一旦在开发中报错或者遇到问题，直接在混淆代码中debug问题会带来非常糟糕的体验，sourceMap可以帮助我们快速定位到源代码的位置，提高我们的开发效率。sourceMap其实并不是Webpack特有的功能，而是Webpack支持sourceMap，像JQuery也支持souceMap。
+
 
 webpack.config 设置变量开启 devtool: 'source-map' // devtool有多种source map模式，分别对应打包速度、生产环境是否能用等等
 
-**tree shaking**
-生产模式打包会自动删除冗余代码
+**Tree-shaking**
+Tree-shaking是一种用于优化JavaScript代码的技术，它可以通过静态分析代码中未被使用的部分并将其删除来减少打包后的文件大小。这样做可以减少浏览器需要下载和解析的代码量，从而提高页面加载速度和性能。
+
+Tree-shaking通过ES6模块系统和静态分析来实现。当Webpack打包应用程序时，它会分析代码中导入和导出的模块，并且只包含被引用的模块和变量。未被引用的模块和变量将被删除，从而减少打包后的文件大小。
+
+Tree-shaking只能删除未被使用的代码，而不能删除被间接使用的代码。因此，在使用Tree-shaking时，需要确保代码中只引用了需要使用的模块和变量。
+
+
+### rollup 打包工具
+
+https://juejin.cn/post/7145090564801691684?searchId=20230813193659B71B8D33A0944E71E150
+
+rollup 是一个 JavaScript 模块打包器，可以将小块代码编译成大块复杂的代码，例如 library 或应用程序。
+rollup的特色是 ES6 模块和代码 Tree-shaking，这些 webpack 同样支持，除此之外 webpack 还支持热模块替换、代码分割、静态资源导入等更多功能。
+当开发应用时当然优先选择的是 webpack，但是若你项目只需要打包出一个简单的 bundle 包，并是基于 ES6 模块开发的，可以考虑使用 rollup。
+**rollup 相比 webpack，它更少的功能和更简单的 api，是我们在打包类库时选择它的原因**
+
+
+
+### Vite
+
+一个基于浏览器原生 ES imports 的开发服务器。利用浏览器去解析 imports，在服务器端按需编译返回，完全跳过了打包这个概念，服务器随起随用。同时不仅有 Vue 文件支持，还搞定了热更新，而且热更新的速度不会随着模块增多而变慢。针对生产环境则可以把同一份代码用 rollup 打。解决改一行代码等半天热更新的问题。
+
+
 
 ### 箭头函数
 箭头函数是ES6中新增的一种函数定义方式，相对于传统的函数定义方式，它具有以下优缺点：
@@ -638,8 +1177,7 @@ React事件分发也就是事件触发。React 的事件触发只会发生在 DO
 ### React 18
 1. render方法废弃，使用createRoot
 
-2. 批量setState
-自动批量更新state，减少渲染次数。18之前，只在react事件中批量更新，18之后可以在Promise\setTimeout\dom原生事件等等批量setState。例子：
+2. 批量setState：自动批量更新state，减少渲染次数。18之前，只在react事件中批量更新，18之后可以在Promise\setTimeout\dom原生事件等等批量setState。例子：
 ```javascript
 setTimeout(() => {
   setCount(c => c + 1);
