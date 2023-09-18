@@ -16,5 +16,5 @@ CSharp脚本
     - 在Update每调用完一次后，紧跟着调用一次
 7. OnDisable
     - 与OnEnable相反，组件未激活时调用
-8. OnDestroy 
+8. OnDestroy
     - 被销毁后调用一次
